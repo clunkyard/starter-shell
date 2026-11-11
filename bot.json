@@ -1,0 +1,17 @@
+{
+  "name": "My robot",
+  "language": "shell",
+  "entry": "lookout.sh",
+  "protocol": 2,
+  "supportedModes": [
+    "2d",
+    "3d"
+  ],
+  "supportedRulesets": [
+    "classic",
+    "inertial-2d",
+    "gravity-flat",
+    "gravity-hills",
+    "zero-g"
+  ]
+}
