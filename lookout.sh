@@ -54,6 +54,24 @@ import "clunkyard" as cy;
 
 def search_turn: 0.33;  # enough to turn against the brake in the force rulesets
 
+# The calibration kernel, xorshift-sqrt v1: work rounds of a 64-bit
+# xorshift and a square-root sum. jq has no bitwise operators, so x is
+# sixteen 4-bit digits, least significant first, and XOR looks digits up
+# in a table.
+def calibration_work($work; $tick):
+  [range(16) as $a | range(16) as $b | reduce (8, 4, 2, 1) as $p (0; . + ((($a / $p | floor) + ($b / $p | floor)) % 2) * $p)] as $t
+  | def xor($y): . as $x | [range(16) as $i | $t[$x[$i] * 16 + $y[$i]]];
+    def digit($i): if $i >= 0 and $i < 16 then .[$i] else 0 end;
+    # Shifts by $q digits and $r bits.
+    def shl($q; $r): . as $x | [range(16) as $i | ($x | digit($i - $q)) * pow(2; $r) % 16 + (($x | digit($i - $q - 1)) / pow(2; 4 - $r) | floor)];
+    def shr($q; $r): . as $x | [range(16) as $i | (($x | digit($i + $q)) / pow(2; $r) | floor) + ($x | digit($i + $q + 1)) * pow(2; 4 - $r) % 16];
+  reduce range($work) as $_ (
+    # 88172645463325252 is 0x0139408dcbbf7a44.
+    {x: ([4, 4, 10, 7, 15, 11, 11, 12, 13, 8, 0, 4, 9, 3, 1, 0] | xor([range(16) as $i | $tick / pow(16; $i) | floor % 16])), sum: 0};
+    .x |= (xor(shl(3; 1)) | xor(shr(1; 3)) | xor(shl(4; 1)))  # x ^= x << 13, x ^= x >> 7, x ^= x << 17
+    | .x as $x | .sum += (reduce range(15; 2; -1) as $i (0; . * 16 + $x[$i]) * 2 + ($x[2] / 8 | floor) | sqrt))  # sqrt(x >> 11)
+  | .x as $x | ((.sum | floor) + reduce range(15; 9; -1) as $i (0; . * 16 + $x[$i])) % 1000000;  # floor(sum) + (x >> 40)
+
 def turn:
   .game as $game | .state as $state | $state.self as $me
   | ((.memory // {tracker: cy::tracker}).tracker | cy::track($state; $game | cy::tick_rate)) as $tracker
@@ -108,6 +126,10 @@ def turn:
       | cy::drive({throttle: 0.8, turn: cy::clamp(cy::angle_diff(cy::bearing_to($me.position; $zone.center); $me.heading) / 30),
                    pitchTurn: cy::clamp(($climb - $me.pitch) / 30)})
     else . end
+  # Only the arena rate calibration sends calibration.work; it times this
+  # language on the same work as every other. Safe to delete.
+  | $state.calibration.work as $work
+  | if ($work | type) == "number" and $work > 0 and $work == ($work | floor) then cy::status("WORK"; calibration_work($work; $state.tick)) else . end
   | {act: ., memory: {tracker: $tracker}};
 
 cy::run(turn)'
