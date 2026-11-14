@@ -27,21 +27,23 @@
 #   momentOfInertia maxThrust maxTorque maxAngularSpeed brakeDeceleration
 #   brakeAngularDeceleration} battery {capacity regen drivePerSecond
 #   strafeFactor compute} gun {turnRate power damage escalation shotSpeed
-#   reloadTicks cost spread shotRadius shotRange muzzleDistance}
-#   scanner {area minRange maxRange minArc maxArc startArc proximityRange}
-#   suddenDeath {startTick dps radiusStart radiusEnd shape center endTick}
-#   sensing {faintFactor beam muzzle motionSpeed pingTicks range
-#   bearingErrorPer100 rangeError rangeBin} objectives {score pickups
-#   hill} storm {radius startTick speed growth dps} derived {hoverLift
-#   sustainableDrive}
+#   reloadTicks cost spread shotRadius shotRange muzzleDistance burst}
+#   scanner {turnRate area minRange maxRange minArc maxArc startArc
+#   proximityRange energyPerSecond warmupTicks} suddenDeath {startTick dps
+#   radiusStart radiusEnd shape center endTick} sensing {faintFactor beam
+#   muzzle motionSpeed motionRange pingTicks range bearingErrorPer100
+#   rangeError rangeBin beamReach flashRange fadeJitter noiseHold}
+#   objectives {score pickups hill} storm {radius startTick speed growth
+#   dps} collisions {damagePerSpeed minSpeed restitution cooldownTicks
+#   damageBy knock knockSeconds} derived {hoverLift sustainableDrive}
 # state: tick self {health battery position velocity heading pitch roll
 #   angularVelocity attitude aim cooldownTicks spread grounded altitude
 #   groundHeight applied} sensors {scan contacts} zone objectives {score
 #   pickups armour hill} storm derived {self gun zone storm objectives}
 # act, every part optional: tick drive {throttle turn pitchTurn}
 #   forces {thrust strafe lift yawTorque pitchTorque rollTorque brake}
-#   aim {heading pitch} scan {heading pitch arc} fire {power} status {text
-#   value}
+#   aim {heading pitch} scan {heading pitch arc on} fire {power}
+#   status {text value}
 # ready: sdk avatar
 # Angles are degrees from the +x axis; pitch is positive up. bot.json
 # carries "protocol": 2.
