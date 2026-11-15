@@ -25,17 +25,18 @@
 #   robots} arena {width height depth gravity terrain} robot {radius
 #   maxHealth maxSpeed maxTurnRate maxPitchTurnRate maxPitch mass
 #   momentOfInertia maxThrust maxTorque maxAngularSpeed brakeDeceleration
-#   brakeAngularDeceleration} battery {capacity regen drivePerSecond
-#   strafeFactor compute} gun {turnRate power damage escalation shotSpeed
-#   reloadTicks cost spread shotRadius shotRange muzzleDistance burst}
-#   scanner {turnRate area minRange maxRange minArc maxArc startArc
-#   proximityRange energyPerSecond warmupTicks} suddenDeath {startTick dps
-#   radiusStart radiusEnd shape center endTick} sensing {faintFactor beam
-#   muzzle motionSpeed motionRange pingTicks range bearingErrorPer100
-#   rangeError rangeBin beamReach flashRange fadeJitter noiseHold}
-#   objectives {score pickups hill} storm {radius startTick speed growth
-#   dps} collisions {damagePerSpeed minSpeed restitution cooldownTicks
-#   damageBy knock knockSeconds} derived {hoverLift sustainableDrive}
+#   brakeAngularDeceleration mounts} battery {capacity regen
+#   drivePerSecond strafeFactor compute} gun {turnRate power damage
+#   escalation shotSpeed reloadTicks cost spread shotRadius shotRange
+#   muzzleDistance burst} scanner {turnRate area minRange maxRange minArc
+#   maxArc startArc proximityRange energyPerSecond warmupTicks bearing}
+#   suddenDeath {startTick dps radiusStart radiusEnd shape center endTick}
+#   sensing {faintFactor beam muzzle motionSpeed motionRange pingTicks
+#   range bearingErrorPer100 rangeError rangeBin beamReach flashRange
+#   fadeJitter noiseHold} objectives {score pickups hill} storm {radius
+#   startTick speed growth dps} collisions {damagePerSpeed minSpeed
+#   restitution cooldownTicks damageBy knock knockSeconds}
+#   derived {hoverLift sustainableDrive}
 # state: tick self {health battery position velocity heading pitch roll
 #   angularVelocity attitude aim cooldownTicks spread grounded altitude
 #   groundHeight applied} sensors {scan contacts} zone objectives {score
@@ -62,6 +63,7 @@ def turn:
   | ($game | cy::is_3d and (cy::gravity | .z) == 0) as $free  # flying free, robots may be above or below
   | ($state | cy::nearest) as $target
   | ($tracker | cy::cue) as $cue  # the freshest passive contact, for a few seconds
+  | (.memory.dodge // {end: 0, count: 0}) as $dodge
   | cy::action | cy::forces({brake: 0.2})
   | if $target then
       cy::drive({throttle: (if $target.range > 350 then 0.7 elif $target.range < 200 then -0.4 else 0.2 end),
@@ -70,6 +72,7 @@ def turn:
       | cy::scan($target.bearing; 20; $target.elevation)  # narrow: holds it, reaching about 735
       # The heaviest shot that still covers the range in about a second,
       # aimed where the target will be, lobbed under gravity.
+      # cy::lead is the intercept if the target holds course.
       | ($game | cy::power_for_flight_time($target.range)) as $power
       | ($game | cy::lead($state; $target | cy::position($me.position); $tracker | cy::tracked_velocity($target.id); $power)
          // {heading: $target.bearing, pitch: $target.elevation}) as $aim
@@ -96,6 +99,15 @@ def turn:
       | cy::scan($state.sensors.scan.heading + 36; 40; if $free then (($state.tick / 10 | floor) % 3 - 1) * 35 else 0 end)
       | cy::status("SEARCH")
     end
+  # A simple dodge: vary it, or predict the shooter.
+  | (if $state.tick >= $dodge.end and any($state | cy::cues[]; .source == "muzzle")
+     then {end: ($state.tick + 10), count: ($dodge.count + 1)} else $dodge end) as $dodge
+  # Off the line of fire: left, then right next time (turn is positive left, strafe right).
+  | ($dodge.count % 2 == 1) as $left
+  | if $state.tick >= $dodge.end then .
+    elif $game | cy::has_forces then cy::drive({throttle: 0.5}) | cy::forces({strafe: (if $left then -1 else 1 end)})
+    else cy::drive({throttle: 1, turn: (if $left then 1 else -1 end)}) end
+  | if $state.tick < $dodge.end then cy::status(if $left then "dodge:left" else "dodge:right" end; $dodge.count) else . end
   # Low battery: drive gently so the shots can still be paid for.
   | if $me.battery < $game.battery.capacity / 4 then cy::drive({throttle: (cy::get("drive"; "throttle") * 0.5)}) else . end
   # The storm hurts inside: drive straight away from its centre.
@@ -110,6 +122,6 @@ def turn:
       | cy::drive({throttle: 0.8, turn: cy::clamp(cy::angle_diff(cy::bearing_to($me.position; $zone.center); $me.heading) / 30),
                    pitchTurn: cy::clamp(($climb - $me.pitch) / 30)})
     else . end
-  | {act: ., memory: {tracker: $tracker}};
+  | {act: ., memory: {tracker: $tracker, dodge: $dodge}};
 
 cy::run(turn)'
