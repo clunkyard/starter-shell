@@ -18,6 +18,13 @@
 #   cues     passive contacts (a ping, a scan beam, a shot heard) say which
 #            way to look, not where to shoot: they have no id and a noisy
 #            bearing, so cy::nearest leaves them out
+#
+# Bearing is earned: a scan contact bearingError (degrees, a fixed share of
+# the arc) says how far off its bearing may be, so a wide beam finds a robot
+# and a narrow one aims at it. The robot narrows the beam on its target and
+# shoots along a line fitted through its recent sightings. The jq SDK keeps
+# no sighting history, so the robot keeps its own in memory. Contacts within
+# 120 units are exact.
 # Clunkyard robot protocol 2: one JSON object per line on stdin (hello, then
 # a state each tick) and stdout (ready, then one act per state). Write
 # debug output to stderr.
@@ -56,6 +63,36 @@ exec jq -nc --unbuffered -L "$(dirname "$0")" '
 import "clunkyard" as cy;
 
 def search_turn: 0.33;  # enough to turn against the brake in the force rulesets
+def search_arc: 40;     # degrees: sweeps the circle in half a second
+def hold_width: 60;     # units across at the target: it stays in the beam from tick to tick
+def min_arc: 6;         # degrees: the narrowest the beam holds
+def window: 12;         # ticks of sightings the aim averages
+def sightings: 8;       # narrow sightings in the window before a shot
+def look_every: 40;     # ticks between looks around the target, for a nearer robot
+def reacquire: 10;      # ticks to look again where a lost target was
+
+# A straight line through the narrowest of the recent sightings of one robot:
+# where it is now, how fast it moves, and how many sightings the line rests
+# on. Each sighting is off by its bearingError; the line averages that out.
+def fit($id; $now; $tick_rate):
+  [.[] | select(.id == $id and .tick > $now - window)] as $recent
+  | if ($recent | length) < 2 then null
+    else
+      ($recent | map(.bearingError) | min) as $best
+      | [$recent[] | select(.bearingError <= 1.5 * $best)] as $seen
+      | ($seen | length) as $n
+      | if $n < 2 then null
+        else
+          (($seen | map(.tick) | add) / $n) as $t0
+          | ($seen | map(pow(.tick - $t0; 2)) | add) as $spread
+          | def axis($k):
+              (($seen | map(.position[$k]) | add) / $n) as $mean
+              | ((($seen | map((.tick - $t0) * (.position[$k] - $mean)) | add) / $spread) as $slope
+                 | [$mean + $slope * ($now - $t0), $slope * $tick_rate]);
+            axis("x") as [$x, $vx] | axis("y") as [$y, $vy] | axis("z") as [$z, $vz]
+          | {position: {x: $x, y: $y, z: $z}, velocity: {x: $vx, y: $vy, z: $vz}, count: $n}
+        end
+    end;
 
 def turn:
   .game as $game | .state as $state | $state.self as $me
@@ -64,22 +101,52 @@ def turn:
   | ($state | cy::nearest) as $target
   | ($tracker | cy::cue) as $cue  # the freshest passive contact, for a few seconds
   | (.memory.dodge // {end: 0, count: 0}) as $dodge
+  # The target sightings of the last few ticks, this tick included.
+  | ([(.memory.sightings // [])[] | select(.tick > $state.tick - window)]
+     + (if $target then [{id: $target.id, tick: $state.tick, bearingError: ($target.bearingError // 0), position: ($target | cy::position($me.position))}] else [] end)) as $seen
+  | (if $target then $target.id else .memory.target end) as $remembered
+  | ($tracker | cy::last_seen($remembered)) as $last_seen
   | cy::action | cy::forces({brake: 0.2})
   | if $target then
       cy::drive({throttle: (if $target.range > 350 then 0.7 elif $target.range < 200 then -0.4 else 0.2 end),
                  turn: cy::clamp(cy::angle_diff($target.bearing; $me.heading) / 45),
                  pitchTurn: cy::clamp(($target.elevation - $me.pitch) / 45)})
-      | cy::scan($target.bearing; 20; $target.elevation)  # narrow: holds it, reaching about 735
+      # Halve the beam each tick until it is hold_width across at the target:
+      # narrow enough for a precise bearing, wide enough to keep it in.
+      | ([min_arc, cy::degrees(2 * atan2(hold_width / 2; $target.range))] | max) as $hold
+      # In a crowd a narrow beam sees one robot. Every look_every ticks,
+      # widen it for a tick: a nearer robot it finds becomes the target.
+      | (if $state.tick % look_every == 0 then search_arc
+         else ([$hold, ([search_arc, $state.sensors.scan.arc / 2] | min)] | max) end) as $arc
+      | cy::scan($target.bearing; $arc; $target.elevation)
       # The heaviest shot that still covers the range in about a second,
       # aimed where the target will be, lobbed under gravity.
-      # cy::lead is the intercept if the target holds course.
       | ($game | cy::power_for_flight_time($target.range)) as $power
-      | ($game | cy::lead($state; $target | cy::position($me.position); $tracker | cy::tracked_velocity($target.id); $power)
-         // {heading: $target.bearing, pitch: $target.elevation}) as $aim
+      # An exact contact: cy::lead is the intercept if the target holds
+      # course. A noisy one: lead the fitted line, and fire only once it
+      # rests on enough sightings.
+      | (if ($target.bearingError // 0) > 0 then
+           ($seen | fit($target.id; $state.tick; $game | cy::tick_rate)) as $line
+           | {aim: (if $line then $game | cy::lead($state; $line.position; $line.velocity; $power) else null end),
+              ready: ($line != null and $line.count >= sightings)}
+         else
+           {aim: ($game | cy::lead($state; $target | cy::position($me.position); $tracker | cy::tracked_velocity($target.id); $power)),
+            ready: true}
+         end) as $shot
+      | ($shot.aim // {heading: $target.bearing, pitch: $target.elevation}) as $aim
       | cy::aim($aim.heading; $aim.pitch)
-      | if (cy::angle_diff($aim.heading; $me.aim.heading) | fabs) < 3 and (($aim.pitch - $me.aim.pitch) | fabs) < 3
+      | if $shot.ready and (cy::angle_diff($aim.heading; $me.aim.heading) | fabs) < 3 and (($aim.pitch - $me.aim.pitch) | fabs) < 3
            and ($game | cy::can_fire($state; $power; 10)) then cy::fire($power) else . end
-      | cy::status("TRACK"; $target.range)
+      | cy::status(if $shot.ready then "TRACK" else "NARROW" end; $target.range)
+    elif $last_seen != null and $state.tick - $last_seen <= reacquire then
+      # Lost it: look again where it was last seen, widening the beam, before searching.
+      ($tracker | cy::tracked_position($remembered)) as $where
+      | cy::bearing_to($me.position; $where) as $bearing
+      | (if $free then cy::elevation_to($me.position; $where) else 0 end) as $elevation
+      | cy::drive({throttle: 0.5, turn: cy::clamp(cy::angle_diff($bearing; $me.heading) / 45),
+                   pitchTurn: cy::clamp(($elevation - $me.pitch) / 45)})
+      | cy::scan($bearing; ([search_arc, $state.sensors.scan.arc * 2] | min); $elevation)
+      | cy::status("REACQUIRE")
     elif $cue then
       # Head for where it was heard, sweeping an arc that still reaches it
       # across the bearing error (and, flying free, the elevation error).
@@ -96,7 +163,7 @@ def turn:
     else
       cy::drive({throttle: 0.5, turn: search_turn, pitchTurn: cy::clamp(-$me.pitch / 45)})
       # Sweeps the circle in half a second, flying free at three heights in turn.
-      | cy::scan($state.sensors.scan.heading + 36; 40; if $free then (($state.tick / 10 | floor) % 3 - 1) * 35 else 0 end)
+      | cy::scan($state.sensors.scan.heading + 36; search_arc; if $free then (($state.tick / 10 | floor) % 3 - 1) * 35 else 0 end)
       | cy::status("SEARCH")
     end
   # A simple dodge: vary it, or predict the shooter.
@@ -122,6 +189,6 @@ def turn:
       | cy::drive({throttle: 0.8, turn: cy::clamp(cy::angle_diff(cy::bearing_to($me.position; $zone.center); $me.heading) / 30),
                    pitchTurn: cy::clamp(($climb - $me.pitch) / 30)})
     else . end
-  | {act: ., memory: {tracker: $tracker, dodge: $dodge}};
+  | {act: ., memory: {tracker: $tracker, dodge: $dodge, sightings: $seen, target: $remembered}};
 
 cy::run(turn)'
