@@ -51,7 +51,7 @@
 # act, every part optional: tick drive {throttle turn pitchTurn}
 #   forces {thrust strafe lift yawTorque pitchTorque rollTorque brake}
 #   aim {heading pitch} scan {heading pitch arc on} fire {power}
-#   status {text value}
+#   status {text value} log
 # ready: sdk avatar
 # Angles are degrees from the +x axis; pitch is positive up. bot.json
 # carries "protocol": 2.
