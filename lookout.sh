@@ -37,17 +37,18 @@
 #   escalation shotSpeed reloadTicks cost spread shotRadius shotRange
 #   muzzleDistance burst} scanner {turnRate area minRange maxRange minArc
 #   maxArc startArc proximityRange energyPerSecond warmupTicks bearing}
-#   suddenDeath {startTick dps radiusStart radiusEnd shape center endTick}
-#   sensing {faintFactor beam muzzle motionSpeed motionRange pingTicks
-#   range bearingErrorPer100 rangeError rangeBin beamReach flashRange
-#   fadeJitter noiseHold} objectives {score pickups hill} storm {radius
-#   startTick speed growth dps} collisions {damagePerSpeed minSpeed
-#   restitution cooldownTicks damageBy knock knockSeconds}
-#   derived {hoverLift sustainableDrive}
+#   suddenDeath {startTick dps radiusStart radiusEnd shape center endTick
+#   stallSeconds closeSeconds} sensing {faintFactor beam muzzle
+#   motionSpeed motionRange pingTicks range bearingErrorPer100 rangeError
+#   rangeBin beamReach flashRange fadeJitter noiseHold} objectives {score
+#   pickups hill} storm {radius startTick speed growth dps}
+#   collisions {damagePerSpeed minSpeed restitution cooldownTicks damageBy
+#   knock knockSeconds} derived {hoverLift sustainableDrive}
 # state: tick self {health battery position velocity heading pitch roll
 #   angularVelocity attitude aim cooldownTicks spread grounded altitude
-#   groundHeight applied} sensors {scan contacts} zone objectives {score
-#   pickups armour hill} storm derived {self gun zone storm objectives}
+#   groundHeight applied wall} sensors {scan contacts} zone
+#   objectives {score pickups armour hill} storm derived {self gun zone
+#   storm objectives}
 # act, every part optional: tick drive {throttle turn pitchTurn}
 #   forces {thrust strafe lift yawTorque pitchTorque rollTorque brake}
 #   aim {heading pitch} scan {heading pitch arc on} fire {power}
